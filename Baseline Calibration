@@ -1,0 +1,174 @@
+#By Marika Kalouniviti
+import sys
+import os
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
+from datetime import datetime
+import numpy as np
+
+# Reference distances (example values)
+reference_distances = {
+    '1-2': 66.6769,
+    '1-3': 166.6812,
+    '1-4': 300.0552,
+    '1-5': 800.2109,
+    '2-3': 100.0043,
+    '2-4': 233.3782,
+    '2-5': 733.5340,
+    '3-4': 133.3739,
+    '3-5': 633.5296,
+    '4-5': 500.1557
+}
+
+measured_distances = {}
+barometric_pressure = 0.0
+temperature = 0.0
+equipment_type = ""
+serial_number = ""
+company_name = ""
+surveyor_name = ""
+booker_name = ""
+
+def enter_weather_conditions():
+    global barometric_pressure, temperature
+    while True:
+        try:
+            barometric_pressure = float(input("Enter barometric pressure (in hPa): "))
+            temperature = float(input("Enter temperature (in °C): "))
+            break
+        except ValueError:
+            print("Error: Please enter valid numbers for pressure and temperature.")
+
+def enter_distances():
+    global measured_distances
+    measured_distances = {}
+    for key in reference_distances:
+        while True:
+            try:
+                distance = float(input(f"Enter distance between points {key}: "))
+                measured_distances[key] = distance
+                break
+            except ValueError:
+                print("Error: Please enter a valid number for distance.")
+
+def enter_equipment_info():
+    global equipment_type, serial_number, company_name
+    equipment_type = input("Enter equipment type: ")
+    serial_number = input("Enter serial number: ")
+    company_name = input("Enter company name: ")
+
+def enter_surveyor_and_booker():
+    global surveyor_name, booker_name
+    surveyor_name = input("Enter surveyor's name: ")
+    booker_name = input("Enter booker's name: ")
+
+def apply_atmospheric_correction(distance, pressure, temp):
+    # Simplified formula for atmospheric refraction correction
+    k = 0.000292
+    corrected_distance = distance / (1 + k * (pressure / (temp + 273.15)))
+    return corrected_distance
+
+def least_squares_adjustment():
+    global measured_distances, barometric_pressure, temperature
+    if not measured_distances:
+        print("Please enter distances first.")
+        return 0.0, 0.0, 0.0, 0.0  # Return 0.0 if no distances entered
+
+    n = len(reference_distances)
+    A = np.zeros((n, 3))  # Design matrix with 3 parameters
+    L = np.zeros(n)       # Observation vector
+
+    for i, key in enumerate(reference_distances):
+        ref_dist = reference_distances[key]
+        meas_dist = measured_distances[key]
+        corrected_distance = apply_atmospheric_correction(meas_dist, barometric_pressure, temperature)
+        A[i] = [1, ref_dist, ref_dist**2]
+        L[i] = corrected_distance
+
+    # Normal equation: (A^T * A) * X = A^T * L
+    At = A.T
+    N = np.dot(At, A)
+    U = np.dot(At, L)
+
+    # Solve for X (containing additive constant, scale factor, and quadratic term)
+    X = np.linalg.solve(N, U)
+    additive_constant, scale_factor, quadratic_term = X
+
+    # Calculate residuals and standard deviation of the residuals
+    residuals = L - np.dot(A, X)
+    std_deviation = np.sqrt(np.sum(residuals**2) / (n - 3))
+
+    return additive_constant, scale_factor, quadratic_term, std_deviation
+
+def generate_pdf(file_name, additive_constant, scale_factor, quadratic_term, std_deviation):
+    c = canvas.Canvas(file_name, pagesize=letter)
+
+    # Draw border around the entire document
+    c.rect(50, 50, 500, 700)
+
+    # Insert logo at the top-left corner
+    logo_path = "logo.png"  # Replace with the path to your logo file
+    c.drawImage(logo_path, 50, 720, width=100, height=50)  # Adjust position and size as needed
+
+    c.setFont("Helvetica", 12)
+
+    # Draw centered heading with #
+    heading = "Calibration Results"
+    c.drawString(150, 730, "#" * (len(heading) + 4))
+    c.drawString(150, 710, f"# {heading} #")
+    c.drawString(150, 690, "#" * (len(heading) + 4))
+
+    # Other text content
+    c.drawString(150, 650, "Department: Lands Department, Control Section")
+    c.drawString(150, 630, "Address: Berkely Crescent, Suva")
+    c.drawString(150, 610, "Author: MK")
+
+    text_content = f"""
+    Equipment Type: {equipment_type}
+    Serial Number: {serial_number}
+    Company Name: {company_name}
+    Surveyor's Name: {surveyor_name}
+    Booker: {booker_name}
+    """
+
+    for i, line in enumerate(text_content.strip().split('\n')):
+        c.drawString(150, 590 - i*20, line.strip())
+
+    # Additive Constant, Scale Factor, Quadratic Term, and Standard Deviation
+    c.drawString(150, 470, f"Additive Constant: {additive_constant:.5f} m")
+    c.drawString(150, 450, f"Scale Factor: {scale_factor:.7f}")
+    c.drawString(150, 430, f"Quadratic Term: {quadratic_term:.7f}")
+    c.drawString(150, 410, f"Standard Deviation: {std_deviation:.5f} m")
+
+    c.save()
+
+def main():
+    global equipment_type, serial_number, company_name, surveyor_name, booker_name
+
+    while True:
+        enter_equipment_info()
+        enter_surveyor_and_booker()
+        enter_weather_conditions()
+        enter_distances()
+        additive_constant, scale_factor, quadratic_term, std_deviation = least_squares_adjustment()
+        file_path = os.path.join(os.path.expanduser("~"), "Downloads", f"calibration_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf")
+        generate_pdf(file_path, additive_constant, scale_factor, quadratic_term, std_deviation)
+        print(f"Additive constant is: {additive_constant:.5f} m")
+        print(f"Scale factor is: {scale_factor:.7f}")
+        print(f"Quadratic term is: {quadratic_term:.7f}")
+        print(f"Standard deviation is: {std_deviation:.5f} m")
+        print(f"PDF report saved to: {file_path}")
+
+        # Prompt to exit or continue
+        while True:
+            choice = input("Do you want to do another equipment calibration? (yes/no): ").strip().lower()
+            if choice == 'yes':
+                break
+            elif choice == 'no':
+                print("Exiting the program.")
+                return
+            else:
+                print("Invalid input. Please enter 'yes' or 'no'.")
+
+if __name__ == "__main__":
+    main()
